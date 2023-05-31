@@ -1,4 +1,5 @@
 #include <cassert>
+#include <fcntl.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -11,15 +12,21 @@ typedef uint32_t (*JITFunction)();
 
 #define PAGE_SIZE 4096
 
+#if (defined __x86_64__) || (defined _M_X64)
 uint8_t machineCode[] = {
     0xb8, 0x05, 0, 0, 0, // mov eax, 5
     0xc3,                // ret
 };
+#elif (defined __arm64__) || (defined __aarch64__) || (defined _M_ARM64)
+uint32_t machineCode[] = {
+    0x528000a0, // mov w0, 5
+    0xd65f03c0, // ret
+};
+#endif
 
 JITFunction createRWXMachineCode() {
 
-  void *mem = mmap(nullptr, PAGE_SIZE, PROT_READ | PROT_EXEC | PROT_WRITE,
-                   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  void *mem = mmap(nullptr, PAGE_SIZE, PROT_READ | PROT_EXEC | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 
   memcpy(mem, &machineCode[0], sizeof(machineCode));
   return (JITFunction)mem;
@@ -27,8 +34,7 @@ JITFunction createRWXMachineCode() {
 
 JITFunction createRXMachineCode() {
 
-  void *mem = mmap(nullptr, PAGE_SIZE, PROT_READ | PROT_WRITE,
-                   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  void *mem = mmap(nullptr, PAGE_SIZE, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 
   memcpy(mem, &machineCode[0], sizeof(machineCode));
 
@@ -37,22 +43,24 @@ JITFunction createRXMachineCode() {
 }
 
 JITFunction createMemFdFunction() {
-  const int32_t jitCodeMapFile = static_cast<int32_t>(
-      syscall(__NR_memfd_create, "temp_memory_file", MFD_CLOEXEC));
+  // const int32_t jitCodeMapFile = static_cast<int32_t>(syscall(__NR_memfd_create, "temp_memory_file", 0));
+
+  int jitCodeMapFile = open("temp_memory_file", O_CREAT | O_RDWR, 0777);
 
   assert(jitCodeMapFile >= 0);
 
-  int32_t const error = ftruncate(jitCodeMapFile, PAGE_SIZE);
+  int32_t error = ftruncate(jitCodeMapFile, PAGE_SIZE);
 
   assert(error == 0);
 
-  void *rwMem = mmap(nullptr, PAGE_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED,
-                     jitCodeMapFile, 0);
+  void *rwMem = mmap(nullptr, PAGE_SIZE, PROT_READ | PROT_WRITE, MAP_SHARED, jitCodeMapFile, 0);
 
   memcpy(rwMem, &machineCode[0], sizeof(machineCode));
 
-  void *rxMem = mmap(nullptr, PAGE_SIZE, PROT_READ | PROT_EXEC, MAP_SHARED,
-                     jitCodeMapFile, 0);
+  error = munmap(rwMem, PAGE_SIZE);
+  assert(error == 0);
+
+  void *rxMem = mmap(nullptr, PAGE_SIZE, PROT_READ | PROT_EXEC, MAP_SHARED, jitCodeMapFile, 0);
   return (JITFunction)rxMem;
 }
 
@@ -81,7 +89,11 @@ void testMemFD() {
 
   printf("memFdFunction address is %p\n", memFdFunction);
 
+#if (defined __x86_64__) || (defined _M_X64)
   asm("int3");
+#elif (defined __arm64__) || (defined __aarch64__) || (defined _M_ARM64)
+  // asm("brk 1000");
+#endif
 
   uint32_t memFdRes = memFdFunction();
 
