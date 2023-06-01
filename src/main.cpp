@@ -43,9 +43,7 @@ JITFunction createRXMachineCode() {
 }
 
 JITFunction createMemFdFunction() {
-  // const int32_t jitCodeMapFile = static_cast<int32_t>(syscall(__NR_memfd_create, "temp_memory_file", 0));
-
-  int jitCodeMapFile = open("temp_memory_file", O_CREAT | O_RDWR, 0777);
+  const int32_t jitCodeMapFile = static_cast<int32_t>(syscall(__NR_memfd_create, "temp_memory_file", 0));
 
   assert(jitCodeMapFile >= 0);
 
@@ -57,10 +55,13 @@ JITFunction createMemFdFunction() {
 
   memcpy(rwMem, &machineCode[0], sizeof(machineCode));
 
-  error = munmap(rwMem, PAGE_SIZE);
+  error = msync(rwMem, PAGE_SIZE, MS_SYNC);
   assert(error == 0);
 
-  void *rxMem = mmap(nullptr, PAGE_SIZE, PROT_READ | PROT_EXEC, MAP_SHARED, jitCodeMapFile, 0);
+  void *rxMem = mmap(nullptr, PAGE_SIZE, PROT_READ | PROT_EXEC, MAP_PRIVATE, jitCodeMapFile, 0);
+
+  error = munmap(rwMem, PAGE_SIZE);
+  assert(error == 0);
   return (JITFunction)rxMem;
 }
 
